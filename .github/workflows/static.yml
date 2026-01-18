@@ -1,43 +1,404 @@
-# Simple workflow for deploying static content to GitHub Pages
-name: Deploy static content to Pages
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>NEON RAMPAGE: UPGRADED</title>
+  <style>
+    body {
+      margin: 0;
+      padding: 0;
+      background: #000;
+      overflow: hidden;
+      font-family: 'Courier New', monospace;
+      color: #0ff;
+    }
+    canvas {
+      display: block;
+      background: #020814;
+    }
+    #ui {
+      position: absolute;
+      top: 10px;
+      left: 10px;
+      font-size: 16px;
+      text-shadow: 0 0 8px #0ff;
+    }
+    #gameOver {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      font-size: 32px;
+      color: #f00;
+      text-shadow: 0 0 20px #f00;
+      display: none;
+    }
+    #upgradeMenu {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      background: rgba(0, 10, 30, 0.9);
+      border: 2px solid #0ff;
+      padding: 20px;
+      border-radius: 10px;
+      text-align: center;
+      display: none;
+      width: 300px;
+      color: #0ff;
+    }
+    .upgrade-btn {
+      display: block;
+      width: 100%;
+      padding: 10px;
+      margin: 10px 0;
+      background: #ff0055;
+      color: white;
+      border: none;
+      font-family: 'Courier New', monospace;
+      cursor: pointer;
+      text-transform: uppercase;
+      font-weight: bold;
+    }
+    .upgrade-btn:hover {
+      background: #ff3377;
+    }
+    .upgrade-btn:disabled {
+      background: #444;
+      color: #666;
+      cursor: not-allowed;
+    }
+  </style>
+</head>
+<body>
+  <div id="ui">
+    HEALTH: <span id="health">100</span> |
+    AMMO: ∞ |
+    SCORE: <span id="score">0</span> |
+    CREDITS: <span id="credits">0</span>
+  </div>
+  <div id="gameOver">GAME OVER<br>CLICK TO RESTART</div>
 
-on:
-  # Runs on pushes targeting the default branch
-  push:
-    branches: ["main"]
+  <div id="upgradeMenu">
+    <h2>🔧 UPGRADE SHOP</h2>
+    <p>Credits: <span id="menuCredits">0</span></p>
+    <button class="upgrade-btn" id="buyArmor">+20 MAX HEALTH (20 Cr)</button>
+    <button class="upgrade-btn" id="buyGuns">+FIRE RATE (15 Cr)</button>
+    <button class="upgrade-btn" id="buyEngine">+SPEED (25 Cr)</button>
+    <button class="upgrade-btn" style="background:#333;" id="closeMenu">CLOSE [U]</button>
+  </div>
 
-  # Allows you to run this workflow manually from the Actions tab
-  workflow_dispatch:
+  <canvas id="gameCanvas"></canvas>
 
-# Sets permissions of the GITHUB_TOKEN to allow deployment to GitHub Pages
-permissions:
-  contents: read
-  pages: write
-  id-token: write
+  <script>
+    const canvas = document.getElementById('gameCanvas');
+    const ctx = canvas.getContext('2d');
+    canvas.width = window.innerWidth;
+    canvas.height = window.innerHeight;
 
-# Allow only one concurrent deployment, skipping runs queued between the run in-progress and latest queued.
-# However, do NOT cancel in-progress runs as we want to allow these production deployments to complete.
-concurrency:
-  group: "pages"
-  cancel-in-progress: false
+    // Game state with upgrades
+    let gameState = {
+      health: 100,
+      maxHealth: 100,
+      score: 0,
+      credits: 0,
+      gameOver: false,
+      fireRate: 300, // ms between shots
+      lastShot: 0,
+      speed: 5
+    };
 
-jobs:
-  # Single deploy job since we're just deploying
-  deploy:
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-      - name: Setup Pages
-        uses: actions/configure-pages@v5
-      - name: Upload artifact
-        uses: actions/upload-pages-artifact@v3
-        with:
-          # Upload entire repository
-          path: '.'
-      - name: Deploy to GitHub Pages
-        id: deployment
-        uses: actions/deploy-pages@v4
+    const player = {
+      x: canvas.width / 2,
+      y: canvas.height / 2,
+      width: 40,
+      height: 70,
+      color: '#ff0055'
+    };
+
+    const bullets = [];
+    const enemies = [];
+    const creditsDrops = [];
+
+    const keys = {};
+    let mouseX = 0;
+    let mouseY = 0;
+    let upgradeMenuOpen = false;
+
+    // Input
+    window.addEventListener('keydown', (e) => {
+      keys[e.key.toLowerCase()] = true;
+      if (e.key.toLowerCase() === 'u' && !gameState.gameOver) {
+        toggleUpgradeMenu();
+      }
+    });
+    window.addEventListener('keyup', (e) => keys[e.key.toLowerCase()] = false);
+    canvas.addEventListener('mousemove', (e) => {
+      const rect = canvas.getBoundingClientRect();
+      mouseX = e.clientX - rect.left;
+      mouseY = e.clientY - rect.top;
+    });
+
+    canvas.addEventListener('click', () => {
+      if (gameState.gameOver) {
+        location.reload();
+      } else if (!upgradeMenuOpen) {
+        shoot();
+      }
+    });
+
+    function toggleUpgradeMenu() {
+      upgradeMenuOpen = !upgradeMenuOpen;
+      document.getElementById('upgradeMenu').style.display = upgradeMenuOpen ? 'block' : 'none';
+      if (upgradeMenuOpen) updateUpgradeMenu();
+    }
+
+    function updateUpgradeMenu() {
+      document.getElementById('menuCredits').textContent = gameState.credits;
+      const armorBtn = document.getElementById('buyArmor');
+      const gunsBtn = document.getElementById('buyGuns');
+      const engineBtn = document.getElementById('buyEngine');
+
+      armorBtn.disabled = gameState.credits < 20;
+      gunsBtn.disabled = gameState.credits < 15;
+      engineBtn.disabled = gameState.credits < 25;
+
+      armorBtn.onclick = () => buyUpgrade('armor');
+      gunsBtn.onclick = () => buyUpgrade('guns');
+      engineBtn.onclick = () => buyUpgrade('engine');
+      document.getElementById('closeMenu').onclick = toggleUpgradeMenu;
+    }
+
+    function buyUpgrade(type) {
+      if (upgradeMenuOpen === false) return;
+      switch(type) {
+        case 'armor':
+          if (gameState.credits >= 20) {
+            gameState.credits -= 20;
+            gameState.maxHealth += 20;
+            gameState.health = Math.min(gameState.maxHealth, gameState.health + 20);
+            updateUI();
+            updateUpgradeMenu();
+          }
+          break;
+        case 'guns':
+          if (gameState.credits >= 15 && gameState.fireRate > 100) {
+            gameState.credits -= 15;
+            gameState.fireRate -= 50;
+            updateUI();
+            updateUpgradeMenu();
+          }
+          break;
+        case 'engine':
+          if (gameState.credits >= 25 && gameState.speed < 10) {
+            gameState.credits -= 25;
+            gameState.speed += 1;
+            updateUI();
+            updateUpgradeMenu();
+          }
+          break;
+      }
+    }
+
+    function shoot() {
+      const now = Date.now();
+      if (now - gameState.lastShot < gameState.fireRate) return;
+      gameState.lastShot = now;
+
+      const angle = Math.atan2(mouseY - player.y, mouseX - player.x);
+      bullets.push({
+        x: player.x,
+        y: player.y,
+        dx: Math.cos(angle) * 10,
+        dy: Math.sin(angle) * 10,
+        radius: 3,
+        color: '#0ff'
+      });
+    }
+
+    function spawnEnemy() {
+      if (gameState.gameOver || upgradeMenuOpen) return;
+      const side = Math.floor(Math.random() * 4);
+      let x, y;
+      switch (side) {
+        case 0: x = Math.random() * canvas.width; y = -50; break;
+        case 1: x = canvas.width + 50; y = Math.random() * canvas.height; break;
+        case 2: x = Math.random() * canvas.width; y = canvas.height + 50; break;
+        case 3: x = -50; y = Math.random() * canvas.height; break;
+      }
+      enemies.push({
+        x, y,
+        width: 35,
+        height: 60,
+        speed: 1.5 + Math.random() * 1.5,
+        color: '#f50',
+        health: 30
+      });
+    }
+
+    function dropCredit(x, y) {
+      creditsDrops.push({
+        x, y,
+        radius: 8,
+        value: 5,
+        collected: false
+      });
+    }
+
+    function rectsOverlap(a, b) {
+      return a.x < b.x + b.width &&
+             a.x + a.width > b.x &&
+             a.y < b.y + b.height &&
+             a.y + a.height > b.y;
+    }
+
+    function dist(x1, y1, x2, y2) {
+      return Math.sqrt((x2 - x1)**2 + (y2 - y1)**2);
+    }
+
+    function updateUI() {
+      document.getElementById('health').textContent = Math.floor(gameState.health);
+      document.getElementById('score').textContent = gameState.score;
+      document.getElementById('credits').textContent = gameState.credits;
+    }
+
+    function update() {
+      if (gameState.gameOver || upgradeMenuOpen) return;
+
+      // Player movement
+      if (keys['w'] || keys['arrowup']) player.y -= gameState.speed;
+      if (keys['s'] || keys['arrowdown']) player.y += gameState.speed;
+      if (keys['a'] || keys['arrowleft']) player.x -= gameState.speed;
+      if (keys['d'] || keys['arrowright']) player.x += gameState.speed;
+
+      player.x = Math.max(player.width/2, Math.min(canvas.width - player.width/2, player.x));
+      player.y = Math.max(player.height/2, Math.min(canvas.height - player.height/2, player.y));
+
+      // Bullets
+      for (let i = bullets.length - 1; i >= 0; i--) {
+        bullets[i].x += bullets[i].dx;
+        bullets[i].y += bullets[i].dy;
+
+        if (bullets[i].x < 0 || bullets[i].x > canvas.width ||
+            bullets[i].y < 0 || bullets[i].y > canvas.height) {
+          bullets.splice(i, 1);
+          continue;
+        }
+
+        for (let j = enemies.length - 1; j >= 0; j--) {
+          if (dist(bullets[i].x, bullets[i].y, enemies[j].x, enemies[j].y) < 30) {
+            enemies[j].health -= 25;
+            bullets.splice(i, 1);
+            if (enemies[j].health <= 0) {
+              gameState.score += 100;
+              gameState.credits += 5;
+              dropCredit(enemies[j].x, enemies[j].y);
+              enemies.splice(j, 1);
+              updateUI();
+            }
+            break;
+          }
+        }
+      }
+
+      // Credits collection
+      for (let i = creditsDrops.length - 1; i >= 0; i--) {
+        const c = creditsDrops[i];
+        if (!c.collected && dist(player.x, player.y, c.x, c.y) < 30) {
+          c.collected = true;
+          gameState.credits += c.value;
+          creditsDrops.splice(i, 1);
+          updateUI();
+        }
+      }
+
+      // Enemies
+      for (let enemy of enemies) {
+        const angle = Math.atan2(player.y - enemy.y, player.x - enemy.x);
+        enemy.x += Math.cos(angle) * enemy.speed;
+        enemy.y += Math.sin(angle) * enemy.speed;
+
+        if (rectsOverlap(player, enemy)) {
+          gameState.health -= 0.5;
+          if (gameState.health <= 0) {
+            gameState.health = 0;
+            gameState.gameOver = true;
+            document.getElementById('gameOver').style.display = 'block';
+          }
+        }
+      }
+
+      if (Math.random() < 0.02) spawnEnemy();
+
+      updateUI();
+    }
+
+    function draw() {
+      ctx.fillStyle = '#020814';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+      // Grid
+      ctx.strokeStyle = '#04122a';
+      ctx.lineWidth = 1;
+      for (let x = 0; x < canvas.width; x += 50) {
+        ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, canvas.height); ctx.stroke();
+      }
+      for (let y = 0; y < canvas.height; y += 50) {
+        ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(canvas.width, y); ctx.stroke();
+      }
+
+      // Player
+      ctx.save();
+      ctx.translate(player.x, player.y);
+      const playerAngle = Math.atan2(mouseY - player.y, mouseX - player.x);
+      ctx.rotate(playerAngle);
+      ctx.fillStyle = player.color;
+      ctx.fillRect(-player.width/2, -player.height/2, player.width, player.height);
+      ctx.fillStyle = '#fff';
+      ctx.fillRect(-8, -player.height/2 - 5, 6, 4);
+      ctx.fillRect(8, -player.height/2 - 5, 6, 4);
+      ctx.restore();
+
+      // Bullets
+      for (let b of bullets) {
+        ctx.beginPath();
+        ctx.arc(b.x, b.y, b.radius, 0, Math.PI * 2);
+        ctx.fillStyle = b.color;
+        ctx.fill();
+      }
+
+      // Enemies
+      for (let e of enemies) {
+        ctx.fillStyle = e.color;
+        ctx.fillRect(e.x - e.width/2, e.y - e.height/2, e.width, e.height);
+        ctx.fillStyle = '#000';
+        ctx.fillRect(e.x - 5, e.y - 10, 3, 3);
+        ctx.fillRect(e.x + 5, e.y - 10, 3, 3);
+      }
+
+      // Credit drops
+      for (let c of creditsDrops) {
+        if (!c.collected) {
+          ctx.beginPath();
+          ctx.arc(c.x, c.y, c.radius, 0, Math.PI * 2);
+          ctx.fillStyle = '#ffcc00';
+          ctx.fill();
+          ctx.strokeStyle = '#ff9900';
+          ctx.lineWidth = 2;
+          ctx.stroke();
+        }
+      }
+    }
+
+    function gameLoop() {
+      update();
+      draw();
+      requestAnimationFrame(gameLoop);
+    }
+
+    setInterval(spawnEnemy, 2000);
+    gameLoop();
+  </script>
+</body>
+</html>
